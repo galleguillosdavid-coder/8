@@ -249,6 +249,14 @@ El proyecto incluye varios scripts de prueba:
 
 **Happy Path**: Implementación del camino ideal sin código defensivo excesivo.
 
+## Seguridad - Archivos Excluidos del Repositorio
+
+Por seguridad, los siguientes archivos/directorios no se suben al repositorio (están en `.gitignore`):
+
+- `experimental/vpn/firebase_config.json` — la URL real de tu base (solo queda local).
+- `experimental/vpn/generated_nat/` — los `.conf` con claves privadas del túnel.
+- `__pycache__/` y archivos `.pyc`.
+
 ## Licencia
 
 Proyecto de investigación y desarrollo de redes alternativas.
