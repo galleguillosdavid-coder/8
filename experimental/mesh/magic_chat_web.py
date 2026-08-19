@@ -17,6 +17,7 @@ from ..container_v1 import ContainerV1, ObjectV1, ContainerError
 from ..vpn.keygen import generate_keypair
 from ..vpn.nat_setup import STUN_SERVER, discover_public_endpoint, has_internet
 from .cert_utils import CERT_PATH
+from .channels import CHANNEL_OBJECT_TYPE, CONTROL, WRITE
 from .magic_socket import MagicSocket
 from .packet_v1 import PacketV1
 from .tracker import list_active_peers, load_firebase_url, publish_node
@@ -140,12 +141,18 @@ class MagicChat:
 
     def send_path_discover(self):
         value = json.dumps({"mtu": self.own_mtu}).encode("utf-8")
-        container = ContainerV1(objects=[ObjectV1(type=PATH_DISCOVER_TYPE, id=0, value=value)])
+        container = ContainerV1(objects=[
+            self._channel_object(CONTROL),
+            ObjectV1(type=PATH_DISCOVER_TYPE, id=0, value=value),
+        ])
         self.ms.send(self.peer_id, PacketV1.pack(container.encode()))
 
     def send_path_response(self):
         value = json.dumps({"mtu": self.own_mtu}).encode("utf-8")
-        container = ContainerV1(objects=[ObjectV1(type=PATH_RESPONSE_TYPE, id=0, value=value)])
+        container = ContainerV1(objects=[
+            self._channel_object(CONTROL),
+            ObjectV1(type=PATH_RESPONSE_TYPE, id=0, value=value),
+        ])
         self.ms.send(self.peer_id, PacketV1.pack(container.encode()))
 
     def _resolve_peer(self, base_url, session, peer_id, peer_addr, peer_relay, own_host):
@@ -190,6 +197,9 @@ class MagicChat:
             pass
 
     def _handle_object(self, obj):
+        if obj.type == CHANNEL_OBJECT_TYPE:
+            return
+
         if obj.type == CHAT_TYPE:
             self.incoming.put({"type": "chat", "text": obj.value.decode("utf-8")})
 
@@ -232,8 +242,14 @@ class MagicChat:
                         "size": len(full),
                     })
 
+    def _channel_object(self, channel):
+        return ObjectV1(type=CHANNEL_OBJECT_TYPE, id=0, value=bytes([channel]))
+
     def send_message(self, text):
-        container = ContainerV1(objects=[ObjectV1(type=CHAT_TYPE, id=0, value=text.encode("utf-8"))])
+        container = ContainerV1(objects=[
+            self._channel_object(WRITE),
+            ObjectV1(type=CHAT_TYPE, id=0, value=text.encode("utf-8")),
+        ])
         self.ms.send(self.peer_id, PacketV1.pack(container.encode()))
 
     def send_file(self, path, filename):
@@ -248,13 +264,19 @@ class MagicChat:
             "total_chunks": total,
             "size": len(data),
         }).encode("utf-8")
-        container = ContainerV1(objects=[ObjectV1(type=FILE_META_TYPE, id=0, value=meta)])
+        container = ContainerV1(objects=[
+            self._channel_object(WRITE),
+            ObjectV1(type=FILE_META_TYPE, id=0, value=meta),
+        ])
         self.ms.send(self.peer_id, PacketV1.pack(container.encode()))
 
         for i in range(total):
             chunk = data[i * CHUNK_SIZE:(i + 1) * CHUNK_SIZE]
             payload = struct.pack("!H I", file_id, i) + chunk
-            container = ContainerV1(objects=[ObjectV1(type=FILE_CHUNK_TYPE, id=0, value=payload)])
+            container = ContainerV1(objects=[
+                self._channel_object(WRITE),
+                ObjectV1(type=FILE_CHUNK_TYPE, id=0, value=payload),
+            ])
             self.ms.send(self.peer_id, PacketV1.pack(container.encode()))
             if i % 10 == 0:
                 time.sleep(0.001)
