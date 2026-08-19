@@ -6,6 +6,7 @@ __pycache__/
 experimental/vpn/generated/
 experimental/vpn/generated2/
 experimental/vpn/generated_nat/
+experimental/vpn/web_data/
 experimental/vpn/firebase_config.json
 
 .env
