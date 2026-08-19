@@ -27,6 +27,7 @@ from flask import Flask, request, render_template_string, send_file, jsonify
 from werkzeug.utils import secure_filename
 
 from ..container_v1 import ContainerV1, ObjectV1, ContainerError
+from ..mesh.magic_chat_web import MagicChat
 
 
 CHAT_TYPE = 100
@@ -341,17 +342,38 @@ def download_file(name):
 
 def main():
     parser = argparse.ArgumentParser(description="IPv7 Web Chat + File Transfer")
-    parser.add_argument("--port", type=int, default=9100, help="puerto UDP local")
-    parser.add_argument("--peer", required=True, help="ip:puerto del otro nodo")
+    parser.add_argument("--port", type=int, default=9100, help="puerto UDP local (modo directo)")
+    parser.add_argument("--peer", help="ip:puerto del otro nodo (modo directo)")
     parser.add_argument("--http", type=int, default=8080, help="puerto del servidor web")
     parser.add_argument("--data-dir", default="experimental/vpn/web_data", help="directorio para archivos")
+    parser.add_argument("--mesh", action="store_true", help="usar MagicSocket mesh")
+    parser.add_argument("--mesh-session")
+    parser.add_argument("--mesh-node-id")
+    parser.add_argument("--mesh-peer", help="node_id del peer")
+    parser.add_argument("--mesh-peer-addr", help="ip:puerto UDP del peer")
+    parser.add_argument("--mesh-relay", default="127.0.0.1:47000", help="ip:puerto DERP relay")
     args = parser.parse_args()
 
-    host, port = args.peer.rsplit(":", 1)
-    peer_addr = (host, int(port))
-
     global chat
-    chat = UdpChat(args.port, peer_addr, args.data_dir)
+    if args.mesh:
+        if not (args.mesh_session and args.mesh_node_id and args.mesh_peer):
+            raise SystemExit("Faltan --mesh-session, --mesh-node-id o --mesh-peer")
+        peer_addr = None
+        if args.mesh_peer_addr:
+            h, p = args.mesh_peer_addr.rsplit(":", 1)
+            peer_addr = (h, int(p))
+        relay_h, relay_p = args.mesh_relay.rsplit(":", 1)
+        peer_relay = (relay_h, int(relay_p))
+        chat = MagicChat(
+            args.mesh_session, args.mesh_node_id, args.mesh_peer, args.port,
+            peer_addr, peer_relay, incoming, data_dir=args.data_dir,
+        )
+    else:
+        if not args.peer:
+            raise SystemExit("Falta --peer")
+        host, port = args.peer.rsplit(":", 1)
+        peer_addr = (host, int(port))
+        chat = UdpChat(args.port, peer_addr, args.data_dir)
 
     print(f"[web] abrir navegador en http://127.0.0.1:{args.http}")
     app.run(host="127.0.0.1", port=args.http, threaded=True, debug=False, use_reloader=False)

@@ -15,6 +15,7 @@ class MagicSocket:
 
     def __init__(self, node_id, local_port, peer_addr, peer_relay=None, ca_cert=CERT_PATH, use_udp=True):
         self.node_id = node_id
+        self.local_port = local_port
         self.peer_addr = peer_addr
         self.use_udp = use_udp
 
@@ -54,8 +55,11 @@ class MagicSocket:
             self.on_packet(src, payload)
 
     def send(self, dest: str, payload: bytes):
-        if self.use_udp:
-            self.udp.sendto(payload, self.peer_addr)
+        if self.use_udp and self.peer_addr and self.peer_addr[1]:
+            try:
+                self.udp.sendto(payload, self.peer_addr)
+            except OSError:
+                pass
             if not self.direct_confirmed:
                 time.sleep(0.1)
         if self.derp and not self.direct_confirmed:
