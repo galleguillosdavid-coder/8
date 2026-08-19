@@ -58,7 +58,7 @@ def run_relay(host=HOST, port=PORT):
             node_id = frame[2]
             with lock:
                 clients[node_id] = conn
-            print(f"[relay] registrado {node_id.decode()} desde {addr}")
+            print(f"[relay] registrado {node_id.decode()} desde {addr}", flush=True)
 
             while True:
                 frame = recv_frame(conn)
@@ -76,9 +76,9 @@ def run_relay(host=HOST, port=PORT):
                     dest_conn = clients.get(dest)
                 if dest_conn:
                     send_frame(dest_conn, 3, node_id, packet)
-                    print(f"[relay] {node_id.decode()} -> {dest.decode()}")
+                    print(f"[relay] {node_id.decode()} -> {dest.decode()}", flush=True)
                 else:
-                    print(f"[relay] destino no conectado: {dest.decode()}")
+                    print(f"[relay] destino no conectado: {dest.decode()}", flush=True)
         except OSError:
             pass
         finally:
@@ -94,7 +94,7 @@ def run_relay(host=HOST, port=PORT):
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind((host, port))
     sock.listen(16)
-    print(f"[relay] escuchando en {host}:{port}")
+    print(f"[relay] escuchando en {host}:{port}", flush=True)
     while True:
         conn, addr = sock.accept()
         threading.Thread(target=client_thread, args=(conn, addr), daemon=True).start()

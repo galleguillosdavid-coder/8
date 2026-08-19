@@ -72,15 +72,15 @@ def main():
     relay_host, relay_port = args.relay.rsplit(":", 1)
     relay_port = int(relay_port)
 
-    print(f"[{args.node_id}] publicando en tracker ...")
+    print(f"[{args.node_id}] publicando en tracker ...", flush=True)
     base_url = discover_and_publish(args.session, args.node_id, relay_host, relay_port)
 
     host, port = relay_host, relay_port
-    print(f"[{args.node_id}] conectando a DERP {host}:{port} ...")
+    print(f"[{args.node_id}] conectando a DERP {host}:{port} ...", flush=True)
     client = DerpClient(args.node_id, host, port)
-    client.on_packet = lambda src, p: print(f"[{args.node_id}] <- {src}: {p.decode('utf-8', 'replace')}")
+    client.on_packet = lambda src, p: print(f"[{args.node_id}] <- {src}: {p.decode('utf-8', 'replace')}", flush=True)
     client.connect()
-    print(f"[{args.node_id}] listo. Escribi mensajes y apreta Enter.")
+    print(f"[{args.node_id}] listo. Escribi mensajes y apreta Enter.", flush=True)
 
     def input_loop():
         while client.connected:
