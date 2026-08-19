@@ -66,7 +66,7 @@ class MagicChat:
     ):
         self.session = session
         self.node_id = node_id
-        self.peer_id = peer_id
+        self.peer_did = peer_id
         self.incoming = incoming
         self.data_dir = Path(data_dir).resolve()
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -88,8 +88,11 @@ class MagicChat:
         own_host = public_endpoint.rsplit(":", 1)[0] if ":" in public_endpoint else "127.0.0.1"
 
         keys = generate_keypair()
+        self.did = f"did:ipv7:{keys.public_b64}"
+        self.peer_did = peer_id
         info = {
             "id": node_id,
+            "did": self.did,
             "public_key": keys.public_b64,
             "endpoint": public_endpoint,
             "local_port": local_port,
@@ -106,13 +109,15 @@ class MagicChat:
         }
         publish_node(base_url, session, node_id, info)
 
-        peer_addr, peer_relay = self._resolve_peer(
+        peer_addr, peer_relay, peer_did = self._resolve_peer(
             base_url, session, peer_id, peer_addr, peer_relay, own_host
         )
+        if peer_did:
+            self.peer_did = peer_did
 
         use_udp = bool(peer_addr[1])
         self.ms = MagicSocket(
-            node_id,
+            self.did,
             local_port,
             peer_addr,
             peer_relay=peer_relay,
@@ -145,7 +150,7 @@ class MagicChat:
             self._channel_object(CONTROL),
             ObjectV1(type=PATH_DISCOVER_TYPE, id=0, value=value),
         ])
-        self.ms.send(self.peer_id, PacketV1.pack(container.encode()))
+        self.ms.send(self.peer_did, PacketV1.pack(container.encode()))
 
     def send_path_response(self):
         value = json.dumps({"mtu": self.own_mtu}).encode("utf-8")
@@ -153,16 +158,18 @@ class MagicChat:
             self._channel_object(CONTROL),
             ObjectV1(type=PATH_RESPONSE_TYPE, id=0, value=value),
         ])
-        self.ms.send(self.peer_id, PacketV1.pack(container.encode()))
+        self.ms.send(self.peer_did, PacketV1.pack(container.encode()))
 
     def _resolve_peer(self, base_url, session, peer_id, peer_addr, peer_relay, own_host):
+        peer_did = None
         if peer_addr and peer_relay:
-            return peer_addr, peer_relay
+            return peer_addr, peer_relay, peer_did
         for _ in range(30):
             time.sleep(1)
             peers = list_active_peers(base_url, session)
             p = peers.get(peer_id)
             if p:
+                peer_did = p.get("did", peer_id)
                 endpoint = p.get("endpoint", "")
                 if ":" in endpoint:
                     host, port = endpoint.rsplit(":", 1)
@@ -181,7 +188,9 @@ class MagicChat:
             peer_addr = ("127.0.0.1", 0)
         if not peer_relay:
             peer_relay = ("127.0.0.1", 47000)
-        return peer_addr, peer_relay
+        if not peer_did:
+            peer_did = peer_id
+        return peer_addr, peer_relay, peer_did
 
     def _next_file_id(self):
         with self.lock:
@@ -250,7 +259,7 @@ class MagicChat:
             self._channel_object(WRITE),
             ObjectV1(type=CHAT_TYPE, id=0, value=text.encode("utf-8")),
         ])
-        self.ms.send(self.peer_id, PacketV1.pack(container.encode()))
+        self.ms.send(self.peer_did, PacketV1.pack(container.encode()))
 
     def send_file(self, path, filename):
         with open(path, "rb") as f:
@@ -268,7 +277,7 @@ class MagicChat:
             self._channel_object(WRITE),
             ObjectV1(type=FILE_META_TYPE, id=0, value=meta),
         ])
-        self.ms.send(self.peer_id, PacketV1.pack(container.encode()))
+        self.ms.send(self.peer_did, PacketV1.pack(container.encode()))
 
         for i in range(total):
             chunk = data[i * CHUNK_SIZE:(i + 1) * CHUNK_SIZE]
@@ -277,7 +286,7 @@ class MagicChat:
                 self._channel_object(WRITE),
                 ObjectV1(type=FILE_CHUNK_TYPE, id=0, value=payload),
             ])
-            self.ms.send(self.peer_id, PacketV1.pack(container.encode()))
+            self.ms.send(self.peer_did, PacketV1.pack(container.encode()))
             if i % 10 == 0:
                 time.sleep(0.001)
 
