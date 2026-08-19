@@ -23,7 +23,7 @@ import threading
 import time
 from pathlib import Path
 
-from flask import Flask, request, render_template_string, send_from_directory, jsonify
+from flask import Flask, request, render_template_string, send_file, jsonify
 from werkzeug.utils import secure_filename
 
 from ..container_v1 import ContainerV1, ObjectV1, ContainerError
@@ -64,7 +64,7 @@ class UdpChat:
     def __init__(self, port, peer_addr, data_dir):
         self.peer_addr = peer_addr
         self.port = port
-        self.data_dir = Path(data_dir)
+        self.data_dir = Path(data_dir).resolve()
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.received_dir = self.data_dir / "received"
         self.received_dir.mkdir(exist_ok=True)
@@ -92,7 +92,7 @@ class UdpChat:
             self.sock.sendto(data, self.peer_addr)
 
     def send_message(self, text):
-        container = ContainerV1([ObjectV1(type=CHAT_TYPE, id=0, value=text.encode("utf-8"))])
+        container = ContainerV1(objects=[ObjectV1(type=CHAT_TYPE, id=0, value=text.encode("utf-8"))])
         self._send(container.encode())
 
     def send_file(self, path, filename):
@@ -108,13 +108,13 @@ class UdpChat:
             "total_chunks": total,
             "size": len(data),
         }).encode("utf-8")
-        container = ContainerV1([ObjectV1(type=FILE_META_TYPE, id=0, value=meta)])
+        container = ContainerV1(objects=[ObjectV1(type=FILE_META_TYPE, id=0, value=meta)])
         self._send(container.encode())
 
         for i in range(total):
             chunk = data[i * CHUNK_SIZE:(i + 1) * CHUNK_SIZE]
             payload = struct.pack("!H I", file_id, i) + chunk
-            container = ContainerV1([ObjectV1(type=FILE_CHUNK_TYPE, id=0, value=payload)])
+            container = ContainerV1(objects=[ObjectV1(type=FILE_CHUNK_TYPE, id=0, value=payload)])
             self._send(container.encode())
             if i % 10 == 0:
                 time.sleep(0.001)
@@ -157,10 +157,11 @@ class UdpChat:
                     with open(save_path, "wb") as out:
                         out.write(full)
                     del self.files_incoming[file_id]
-                    self.files.append({"id": file_id, "name": safe, "path": save_path.name})
+                    self.files.append({"name": save_path.name, "display": safe})
                     incoming.put({
                         "type": "file",
-                        "name": safe,
+                        "name": save_path.name,
+                        "display": safe,
                         "size": len(full),
                     })
 
@@ -222,7 +223,7 @@ INDEX_HTML = """
       div.className = 'msg' + (data.type === 'system' ? ' system' : '');
       if (data.type === 'chat') div.innerHTML = '<b>peer:</b> ' + escapeHtml(data.text);
       else if (data.type === 'system') div.textContent = data.text;
-      else if (data.type === 'file') div.innerHTML = 'Archivo recibido: <a href="/download/' + data.name + '" download>' + escapeHtml(data.name) + '</a> (' + data.size + ' bytes)';
+      else if (data.type === 'file') div.innerHTML = 'Archivo recibido: <a href="/download/' + data.name + '" download>' + escapeHtml(data.display || data.name) + '</a> (' + data.size + ' bytes)';
       messages.appendChild(div);
       messages.scrollTop = messages.scrollHeight;
     }
@@ -264,7 +265,8 @@ INDEX_HTML = """
       ul.innerHTML = '';
       for (const f of list) {
         const li = document.createElement('li');
-        li.innerHTML = '<a href="/download/' + f.name + '" download>' + escapeHtml(f.name) + '</a>';
+        const display = f.display || f.name;
+        li.innerHTML = '<a href="/download/' + f.name + '" download>' + escapeHtml(display) + '</a>';
         ul.appendChild(li);
       }
     }
@@ -287,7 +289,8 @@ def index():
 
 @app.route("/send", methods=["POST"])
 def send_message():
-    text = request.json.get("text", "").strip()
+    data = request.get_json(silent=True) or {}
+    text = data.get("text", "").strip()
     if text:
         chat.send_message(text)
     return jsonify({"ok": True})
@@ -330,7 +333,10 @@ def list_files():
 
 @app.route("/download/<name>")
 def download_file(name):
-    return send_from_directory(chat.received_dir, name, as_attachment=True)
+    path = (chat.received_dir / name).resolve()
+    if not path.exists() or not str(path).startswith(str(chat.received_dir)):
+        return jsonify({"error": "not found"}), 404
+    return send_file(path, as_attachment=True)
 
 
 def main():
