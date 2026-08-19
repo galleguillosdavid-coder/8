@@ -267,7 +267,9 @@ class MagicChat:
         with open(path, "rb") as f:
             data = f.read()
         file_id = self._next_file_id()
-        total = (len(data) + CHUNK_SIZE - 1) // CHUNK_SIZE
+        # El overhead aproximado por chunk es ~56 bytes (Container + Object + PacketV1 + nonce).
+        chunk_size = min(CHUNK_SIZE, max(1, self.ms.path_mtu - 60))
+        total = (len(data) + chunk_size - 1) // chunk_size
 
         meta = json.dumps({
             "id": file_id,
@@ -282,7 +284,7 @@ class MagicChat:
         self.ms.send(self.peer_did, PacketV1.pack(container.encode()))
 
         for i in range(total):
-            chunk = data[i * CHUNK_SIZE:(i + 1) * CHUNK_SIZE]
+            chunk = data[i * chunk_size:(i + 1) * chunk_size]
             payload = struct.pack("!H I", file_id, i) + chunk
             container = ContainerV1(objects=[
                 self._channel_object(WRITE),
