@@ -18,6 +18,7 @@ from ..vpn.keygen import generate_keypair
 from ..vpn.nat_setup import STUN_SERVER, discover_public_endpoint, has_internet
 from .cert_utils import CERT_PATH
 from .magic_socket import MagicSocket
+from .packet_v1 import PacketV1
 from .tracker import list_peers, load_firebase_url, publish_node
 from werkzeug.utils import secure_filename
 
@@ -152,7 +153,7 @@ class MagicChat:
 
     def _on_packet(self, src, payload):
         try:
-            container = ContainerV1.decode(payload)
+            container = ContainerV1.decode(PacketV1.unpack(payload))
             for obj in container.objects:
                 self._handle_object(obj)
         except ContainerError:
@@ -191,7 +192,7 @@ class MagicChat:
 
     def send_message(self, text):
         container = ContainerV1(objects=[ObjectV1(type=CHAT_TYPE, id=0, value=text.encode("utf-8"))])
-        self.ms.send(self.peer_id, container.encode())
+        self.ms.send(self.peer_id, PacketV1.pack(container.encode()))
 
     def send_file(self, path, filename):
         with open(path, "rb") as f:
@@ -206,13 +207,13 @@ class MagicChat:
             "size": len(data),
         }).encode("utf-8")
         container = ContainerV1(objects=[ObjectV1(type=FILE_META_TYPE, id=0, value=meta)])
-        self.ms.send(self.peer_id, container.encode())
+        self.ms.send(self.peer_id, PacketV1.pack(container.encode()))
 
         for i in range(total):
             chunk = data[i * CHUNK_SIZE:(i + 1) * CHUNK_SIZE]
             payload = struct.pack("!H I", file_id, i) + chunk
             container = ContainerV1(objects=[ObjectV1(type=FILE_CHUNK_TYPE, id=0, value=payload)])
-            self.ms.send(self.peer_id, container.encode())
+            self.ms.send(self.peer_id, PacketV1.pack(container.encode()))
             if i % 10 == 0:
                 time.sleep(0.001)
 
