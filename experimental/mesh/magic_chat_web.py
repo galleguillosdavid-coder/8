@@ -26,6 +26,8 @@ from werkzeug.utils import secure_filename
 CHAT_TYPE = 100
 FILE_META_TYPE = 101
 FILE_CHUNK_TYPE = 102
+PATH_DISCOVER_TYPE = 10
+PATH_RESPONSE_TYPE = 11
 CHUNK_SIZE = 1200
 
 
@@ -59,6 +61,7 @@ class MagicChat:
         incoming,
         data_dir="experimental/mesh/web_data",
         ca_cert=CERT_PATH,
+        own_mtu=1280,
     ):
         self.session = session
         self.node_id = node_id
@@ -73,6 +76,7 @@ class MagicChat:
         self.files = []
         self.files_incoming = {}
         self.file_id_counter = 0
+        self.own_mtu = own_mtu
         self.lock = threading.Lock()
 
         base_url = load_firebase_url()
@@ -89,6 +93,7 @@ class MagicChat:
             "endpoint": public_endpoint,
             "local_port": local_port,
             "relay_port": peer_relay[1] if peer_relay else 0,
+            "mtu": own_mtu,
             "can_gateway": has_internet(),
             "timestamp": time.time(),
         }
@@ -109,6 +114,7 @@ class MagicChat:
         )
         self.ms.on_packet = self._on_packet
         self.ms.connect()
+        threading.Thread(target=self._path_mtu_discovery, daemon=True).start()
 
     @property
     def peer_addr(self):
@@ -117,6 +123,24 @@ class MagicChat:
     @property
     def port(self):
         return self.ms.local_port
+
+    def _path_mtu_discovery(self):
+        for _ in range(30):
+            time.sleep(1)
+            if self.ms.derp and not self.ms.derp.connected:
+                continue
+            self.send_path_discover()
+            break
+
+    def send_path_discover(self):
+        value = json.dumps({"mtu": self.own_mtu}).encode("utf-8")
+        container = ContainerV1(objects=[ObjectV1(type=PATH_DISCOVER_TYPE, id=0, value=value)])
+        self.ms.send(self.peer_id, PacketV1.pack(container.encode()))
+
+    def send_path_response(self):
+        value = json.dumps({"mtu": self.own_mtu}).encode("utf-8")
+        container = ContainerV1(objects=[ObjectV1(type=PATH_RESPONSE_TYPE, id=0, value=value)])
+        self.ms.send(self.peer_id, PacketV1.pack(container.encode()))
 
     def _resolve_peer(self, base_url, session, peer_id, peer_addr, peer_relay, own_host):
         if peer_addr and peer_relay:
@@ -162,6 +186,18 @@ class MagicChat:
     def _handle_object(self, obj):
         if obj.type == CHAT_TYPE:
             self.incoming.put({"type": "chat", "text": obj.value.decode("utf-8")})
+
+        elif obj.type == PATH_DISCOVER_TYPE:
+            self.send_path_response()
+
+        elif obj.type == PATH_RESPONSE_TYPE:
+            try:
+                peer_mtu = json.loads(obj.value.decode("utf-8")).get("mtu", self.own_mtu)
+                mtu = min(self.own_mtu, peer_mtu)
+                self.ms.set_mtu(mtu)
+                self.incoming.put({"type": "system", "text": f"PATH_MTU = {mtu}"})
+            except (json.JSONDecodeError, KeyError):
+                pass
 
         elif obj.type == FILE_META_TYPE:
             meta = json.loads(obj.value.decode("utf-8"))

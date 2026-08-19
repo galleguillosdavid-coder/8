@@ -31,6 +31,7 @@ class MagicSocket:
         self.on_packet = None
         self.direct_confirmed = False
         self._running = False
+        self.path_mtu = 1500
 
     def connect(self):
         if self.derp:
@@ -54,15 +55,18 @@ class MagicSocket:
         if self.on_packet:
             self.on_packet(src, payload)
 
+    def set_mtu(self, mtu):
+        self.path_mtu = min(1500, max(1280, int(mtu)))
+
     def send(self, dest: str, payload: bytes):
-        if self.use_udp and self.peer_addr and self.peer_addr[1]:
+        if self.use_udp and self.peer_addr and self.peer_addr[1] and len(payload) <= self.path_mtu:
             try:
                 self.udp.sendto(payload, self.peer_addr)
             except OSError:
                 pass
             if not self.direct_confirmed:
                 time.sleep(0.1)
-        if self.derp and not self.direct_confirmed:
+        if self.derp and (not self.direct_confirmed or len(payload) > self.path_mtu):
             self.derp.send(dest, payload)
 
     def close(self):
