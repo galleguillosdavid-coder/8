@@ -121,6 +121,7 @@ class MagicChat:
             local_port,
             peer_addr,
             peer_relay=peer_relay,
+            peer_id=self.peer_did,
             ca_cert=ca_cert,
             use_udp=use_udp,
         )
