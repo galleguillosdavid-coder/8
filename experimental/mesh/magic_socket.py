@@ -103,6 +103,13 @@ class MagicSocket:
     def set_mtu(self, mtu):
         self.path_mtu = min(1500, max(1280, int(mtu)))
 
+    def _try_derp(self, dest, data):
+        if self.derp:
+            try:
+                self.derp.send(dest, data)
+            except RuntimeError:
+                pass
+
     def send(self, dest: str, payload: bytes):
         data = self._make_packet(payload)
         if self.use_udp and self.peer_addr and self.peer_addr[1] and len(data) <= self.path_mtu:
@@ -110,8 +117,10 @@ class MagicSocket:
                 self.udp.sendto(data, self.peer_addr)
             except OSError:
                 pass
-            if self.derp and not self.direct_confirmed:
-                threading.Timer(0.05, self._derp_fallback, args=(dest, data)).start()
+            # Enviar por DERP con pequeño retardo para evitar perder el paquete
+            # si UDP directo falla. El receptor descarta duplicados por nonce.
+            if self.derp:
+                threading.Timer(0.05, self._try_derp, args=(dest, data)).start()
         elif self.derp:
             try:
                 self.derp.send(dest, data)

@@ -51,21 +51,28 @@
 > Especificación mínima que debe congelarse antes de agregar nuevos perfiles. El ADN de IPv7.
 
 1. **Container** — unidad estructural de transporte. Contiene metadatos comunes y uno o más Objects.
-2. **Object / IDTLV** — `Type | Length | Object ID | Value`. `Type` es estructural; `Object ID` identifica la instancia dentro de la sesión/container.
-3. **Object Type vs Object ID** — el `Type` describe la estructura; el `Object ID` identifica el objeto concreto. Son distintos.
-4. **Object version** — versión lógica del estado de un objeto, separada de la `sequence` del Container.
-5. **Container sequence** — orden de transporte del Container, usado para detectar pérdida y reordenamiento.
-6. **Session** — contexto persistente identificado por `session_id` con origen/destino comprimido (aliasing).
+2. **Object / IDTLV** — `Type | Length | Object ID | Value`.
+   - `Type` = estructural.
+   - `Length` = bytes de `Object ID + Value`.
+   - `Object ID` = identifica la instancia **dentro de la Session** (no del Container). Permite reutilizar y actualizar el mismo objeto en múltiples Containers.
+   - `Object ID` de 1 byte es suficiente para v0.1 (256 IDs por sesión). Se puede extender en versiones futuras.
+3. **Object Type vs Object ID** — `Type` describe la estructura; `Object ID` identifica el objeto concreto dentro de la sesión. Son distintos.
+4. **Object version** — versión lógica del estado de un objeto. Está vinculada al `Object ID`, no al Container. Permite detectar deltas obsoletos y reordenar actualizaciones.
+5. **Container sequence** — orden de transporte del Container **dentro de una Session**. Detecta pérdida y reordenamiento de Containers, no de estados.
+6. **Session** — contexto persistente identificado por `session_id` con origen/destino comprimido (aliasing). Cada sesión tiene su propio espacio de `Object IDs`, `Container sequence` y `Object versions`.
 7. **Identity** — DID derivado de clave pública, separado de endpoint/location.
 8. **Integrity** — hash estructural (SHA-256) sobre el Container. No es autenticación ni confidencialidad.
 9. **Path / MTU / Multipath** — descubrimiento de caminos, identificadores de path, métricas y MTU.
-10. **Channel / Priority / Reliability** — clasificación de entrega/transporte. El Core transporta `channel_id`, `priority`, `reliability` sin saber el significado.
-11. **Fragmentation** — un Container puede dividirse en fragmentos con `container_id`, `fragment_id`, `fragment_count`. Los fragmentos no son Objects independientes.
-12. **TTL / timestamp / ordering** — expiración para discovery, paths, mensajes y estados.
-13. **Intent / propósito opaco** — `intent_id` numérico opaco para el Core; el Profile lo mapea a significado.
-14. **ACK opcional** — `ACK_CONTAINER`, `ACK_OBJECT`, `NO_ACK` son primitivas transportadas por el Core; el Profile decide cuándo usarlas.
-15. **Delta objects** — actualización parcial de un objeto existente sin retransmitir el estado completo.
-16. **Snapshot / resync** — recuperación de estado completo cuando un receptor pierde deltas.
+10. **Container schema / profile reference** — el Container transporta un `schema_id` o `profile_id` opaco. El Profile interpreta el esquema; el Core solo lo transporta.
+11. **Channel / Priority / Reliability** — clasificación de entrega/transporte. El Core transporta `channel_id`, `priority`, `reliability` sin saber el significado.
+12. **Fragmentation** — un Container puede dividirse en fragmentos con `container_id`, `fragment_id`, `fragment_count`. Los fragmentos no son Objects independientes.
+13. **TTL / timestamp / ordering** — expiración para discovery, paths, mensajes y estados.
+14. **Intent / propósito opaco** — `intent_id` numérico opaco para el Core; el Profile lo mapea a significado.
+15. **ACK opcional** — `ACK_CONTAINER`, `ACK_OBJECT`, `NO_ACK` son primitivas transportadas por el Core; el Profile decide cuándo usarlas.
+16. **Delta objects** — actualización parcial de un objeto existente sin retransmitir el estado completo.
+17. **Snapshot / resync** — recuperación de estado completo cuando un receptor pierde deltas.
+
+> **Esta especificación del Core está congelada para v0.1.** No se agregan más conceptos al Core. El siguiente paso es convertir estos 17 elementos en un wire format binario concreto.
 
 ---
 
@@ -146,10 +153,12 @@ PATH_MTU = 1280
 - [ ] Recuperar y formalizar el formato:
   ```text
   Type (1 byte)
-  Length (2 bytes)
-  Object ID (1 byte)
+  Length (2 bytes)     # bytes de Object ID + Value
+  Object ID (1 byte)   # ámbito = Session (256 IDs por sesión para v0.1)
   Value
   ```
+- [ ] `Length` cubre `Object ID + Value` para permitir saltar el Object completo de forma determinista.
+- [ ] `Object ID` es **local a la Session**, no al Container. Permite reutilizar y actualizar el mismo objeto en múltiples Containers.
 - [ ] Separar **tipo estructural**, **identificación local del objeto** y **contenido**.
 - [ ] Permitir reutilizar objetos y referenciarlos por ID para deltas/compresión.
 
@@ -189,8 +198,15 @@ PATH_MTU = 1280
 
 ### 6. Container sequence vs Object version
 
-- [ ] `Container sequence` = orden de transporte del Container.
-- [ ] `Object version` = estado lógico del objeto.
+- [ ] Tres dimensiones separadas:
+  ```text
+  session_id
+  sequence         # Container sequence dentro de la Session
+  object_id
+  object_version   # estado lógico del objeto
+  ```
+- [ ] `Container sequence` = orden de transporte del Container dentro de una Session.
+- [ ] `Object version` = estado lógico del objeto, vinculado al `Object ID`.
 - [ ] No son lo mismo. Se usan para detectar pérdida, reordenamiento y deltas obsoletos.
 
 ### 7. Delta objects
@@ -245,7 +261,23 @@ PATH_MTU = 1280
   ```
 - [ ] Esto diferencia a IPv7 de IP: transporta actualizaciones de entidades, no solo paquetes aislados.
 
-### 11. Schema / dictionary negotiation
+### 11. Container schema / profile reference
+
+- [ ] El Container transporta un `schema_id` o `profile_id` opaco.
+- [ ] Ejemplo de metadatos comunes del Container:
+  ```text
+  schema_id / profile_id
+  session_id
+  container_sequence
+  channel_id
+  priority
+  reliability
+  ttl
+  ```
+- [ ] El Profile interpreta el esquema; el Core solo lo transporta.
+- [ ] Esto desacopla estructura de semántica y permite negociación de esquemas.
+
+### 13. Schema / dictionary negotiation
 
 - [ ] Definir negociación de esquemas entre nodos:
   ```text
@@ -256,12 +288,12 @@ PATH_MTU = 1280
 - [ ] Evaluar CBOR y IDs de esquema para no repetir estructuras.
 - [ ] Conectar con versionado de Profiles.
 
-### 12. Session ID + aliasing
+### 14. Session ID + aliasing
 
 - [ ] Usar `session_id` (uint32) en vez de repetir origen/destino.
 - [ ] Comprimir identidad de sesión una vez establecida.
 
-### 13. Seguridad separada
+### 15. Seguridad separada
 
 - [x] SHA-256 como integridad de paquete.
 - [ ] Agregar firma / autenticidad del DID.
@@ -275,19 +307,19 @@ PATH_MTU = 1280
   Anti-replay   → sequence + timestamp
   ```
 
-### 14. Transporte agnóstico
+### 16. Transporte agnóstico
 
 - [ ] El Core no depende de un único transporte físico.
 - [ ] Puede funcionar sobre UDP, WireGuard, QUIC, DERP, LAN, Internet y transportes futuros.
 - [ ] `MagicSocket` debe poderse adaptar a nuevos data planes sin cambiar `ContainerV1`.
 
-### 15. Control plane vs data plane
+### 17. Control plane vs data plane
 
 - [x] Firebase como control plane provisional.
 - [ ] Diseñar control plane nativo IPv7 (discovery/federación) sin depender de Firebase.
 - [ ] Mantener DERP/UDP/WireGuard como data plane intercambiables.
 
-### 16. Path identity
+### 18. Path identity
 
 - [ ] Cuando haya multipath, identificar caminos con `PATH_ID`.
 - [ ] Asociar métricas por path:
@@ -300,7 +332,7 @@ PATH_MTU = 1280
   state
   ```
 
-### 17. Fragmentación
+### 19. Fragmentación
 
 - [ ] Un Container se divide en fragmentos con:
   ```text
@@ -312,20 +344,37 @@ PATH_MTU = 1280
 - [ ] Los fragmentos pertenecen al Container, no son Objects independientes.
 - [ ] No contaminan la semántica.
 
-### 18. TTL / expiración
+### 20. TTL / expiración
 
 - [ ] TTL para discovery, paths, mensajes y estados.
 - [ ] Evitar que información vieja permanezca indefinidamente.
 
-### 19. ACK opcional
+### 21. ACK opcional
 
 - [ ] Tres niveles: `ACK_CONTAINER`, `ACK_OBJECT`, `NO_ACK`.
 - [ ] Algunos perfiles no necesitan ACK (telemetry); otros sí (file, control).
 - [ ] El Core transporta el mecanismo; el Profile decide.
 
-### 20. Capability discovery
+### 22. Profile vs Capability
 
-- [ ] Un nodo anuncia capacidades (`chat`, `file`, `gateway`, `sensor`, ...).
+- [ ] **Profile** = "sé interpretar este protocolo/semántica" (`chat.v1`, `file.v1`, `media.v1`).
+- [ ] **Capability** = "puedo realizar esta función" (`INTERNET_GATEWAY`, `STORAGE`, `RELAY`).
+- [ ] Un nodo puede soportar `file.v1` sin tener `STORAGE`.
+- [ ] Un nodo puede tener `INTERNET_GATEWAY` sin ser un Profile de aplicación.
+- [ ] Jerarquía:
+  ```text
+  Identity
+      ↓
+  Profile support
+      ↓
+  Capabilities
+      ↓
+  Selection
+  ```
+
+### 23. Capability discovery
+
+- [ ] Un nodo anuncia sus Profiles y Capabilities en el tracker/control plane.
 - [ ] Otro nodo puede descubrir y seleccionar un gateway u otro servicio.
 - [ ] Distinguir **quién eres** (identidad) de **qué puedes hacer** (capacidad).
 

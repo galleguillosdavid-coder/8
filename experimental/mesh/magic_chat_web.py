@@ -262,7 +262,9 @@ class MagicChat:
             self._channel_object(WRITE),
             ObjectV1(type=CHAT_TYPE, id=0, value=text.encode("utf-8")),
         ])
-        self.ms.send(self.peer_did, PacketV1.pack(container.encode()))
+        data = PacketV1.pack(container.encode())
+        print(f"[send_message] text={text!r} len={len(data)} to={self.peer_did[:20]}...", flush=True)
+        self.ms.send(self.peer_did, data)
 
     def send_file(self, path, filename):
         with open(path, "rb") as f:
