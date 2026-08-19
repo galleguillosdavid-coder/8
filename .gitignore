@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+experimental/vpn/generated/
+experimental/vpn/generated2/
+experimental/vpn/generated_nat/
+experimental/vpn/firebase_config.json
+
+.env
+*.log
