@@ -28,6 +28,7 @@ from werkzeug.utils import secure_filename
 
 from ..container_v1 import ContainerV1, ObjectV1, ContainerError
 from ..mesh.magic_chat_web import MagicChat
+from ..mesh.tracker import list_peers, load_firebase_url
 
 
 CHAT_TYPE = 100
@@ -198,7 +199,10 @@ INDEX_HTML = """
 </head>
 <body>
   <h1>IPv7 Chat & Archivos</h1>
-  <p>Peer: <code>{{ peer }}</code> | UDP local: <code>:{{ port }}</code></p>
+  <p>Peer actual: <code>{{ peer }}</code> | UDP local: <code>:{{ port }}</code></p>
+
+  <h3>Peers conocidos</h3>
+  <ul id="peers"></ul>
 
   <div id="messages"></div>
 
@@ -259,6 +263,18 @@ INDEX_HTML = """
       drop.textContent = 'Arrastra un archivo aqui o hace click para subirlo';
     }
 
+    async function loadPeers() {
+      const res = await fetch('/peers');
+      const list = await res.json();
+      const ul = document.getElementById('peers');
+      ul.innerHTML = '';
+      for (const p of list) {
+        const li = document.createElement('li');
+        li.textContent = p.id + ' (' + p.endpoint + ', relay=' + p.relay_port + ')';
+        ul.appendChild(li);
+      }
+    }
+
     async function loadFiles() {
       const res = await fetch('/files');
       const list = await res.json();
@@ -276,6 +292,7 @@ INDEX_HTML = """
     es.onmessage = (e) => { append(JSON.parse(e.data)); if (e.data.includes('"type":"file"')) loadFiles(); };
     es.onerror = () => append({type: 'system', text: 'Conexion de eventos perdida'});
 
+    loadPeers();
     loadFiles();
   </script>
 </body>
@@ -325,6 +342,20 @@ def events():
         "Cache-Control": "no-cache",
         "X-Accel-Buffering": "no",
     }
+
+
+@app.route("/peers")
+def peers():
+    if isinstance(chat, MagicChat):
+        base_url = load_firebase_url()
+        all_peers = list_peers(base_url, chat.session)
+        result = [
+            {"id": k, "endpoint": v.get("endpoint"), "relay_port": v.get("relay_port")}
+            for k, v in all_peers.items()
+            if k != chat.node_id
+        ]
+        return jsonify(result)
+    return jsonify([])
 
 
 @app.route("/files")
