@@ -200,13 +200,10 @@ class MagicChat:
 
     def _on_packet(self, src, payload):
         try:
-            print(f"[on_packet] src={src} payload_len={len(payload)}", flush=True)
             container = ContainerV1.decode(PacketV1.unpack(payload))
             for obj in container.objects:
-                print(f"[on_packet] obj type={obj.type} id={obj.id}", flush=True)
                 self._handle_object(obj)
-        except ContainerError as e:
-            print(f"[on_packet] error: {e}", flush=True)
+        except ContainerError:
             pass
 
     def _handle_object(self, obj):

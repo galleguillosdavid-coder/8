@@ -77,12 +77,9 @@ class MagicSocket:
                 continue
             nonce = data[:4]
             payload = data[4:]
-            print(f"[recv_udp] nonce={nonce.hex()} len={len(payload)}", flush=True)
             if not self._add_seen(nonce):
-                print(f"[recv_udp] duplicate nonce", flush=True)
                 continue
             self.direct_confirmed = True
-            print(f"[recv_udp] new packet -> on_packet", flush=True)
             if self.on_packet:
                 self.on_packet(self.peer_id or self.node_id, payload)
 
@@ -91,11 +88,8 @@ class MagicSocket:
             return
         nonce = payload[:4]
         data = payload[4:]
-        print(f"[on_derp] src={src} nonce={nonce.hex()} len={len(data)}", flush=True)
         if not self._add_seen(nonce):
-            print(f"[on_derp] duplicate nonce", flush=True)
             return
-        print(f"[on_derp] new packet -> on_packet", flush=True)
         if self.on_packet:
             self.on_packet(src, data)
 
@@ -111,21 +105,18 @@ class MagicSocket:
 
     def send(self, dest: str, payload: bytes):
         data = self._make_packet(payload)
-        print(f"[send] peer_addr={self.peer_addr} use_udp={self.use_udp} mtu={self.path_mtu} len={len(data)} direct={self.direct_confirmed}", flush=True)
         if self.use_udp and self.peer_addr and self.peer_addr[1] and len(data) <= self.path_mtu:
             try:
-                sent = self.udp.sendto(data, self.peer_addr)
-                print(f"[send] udp sent {sent} bytes to {self.peer_addr}", flush=True)
-            except OSError as e:
-                print(f"[send] udp error {e}", flush=True)
+                self.udp.sendto(data, self.peer_addr)
+            except OSError:
+                pass
             if self.derp and not self.direct_confirmed:
                 threading.Timer(0.05, self._derp_fallback, args=(dest, data)).start()
         elif self.derp:
             try:
                 self.derp.send(dest, data)
-                print(f"[send] derp sent to {dest}", flush=True)
-            except RuntimeError as e:
-                print(f"[send] derp error {e}", flush=True)
+            except RuntimeError:
+                pass
 
     def close(self):
         self._running = False
