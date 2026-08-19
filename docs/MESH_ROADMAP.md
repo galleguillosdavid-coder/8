@@ -16,11 +16,24 @@
 │                PROFILES                  │
 │ Chat / File / Media / Sensor / Gateway   │
 ├──────────────────────────────────────────┤
-│              IPv7 CORE                   │
-│ Objects / Containers / Sessions          │
-│ Routing / Paths / MTU / Channels         │
-│ Identity / Integrity / Fragmentation     │
-├──────────────────────────────────────────┤
+│                  IPv7 CORE               │
+│                                          │
+│ Identity                                  │
+│ Session                                   │
+│ Container                                 │
+│ Object / IDTLV                            │
+│ Sequence / Object Version                 │
+│ Fragmentation                             │
+│ Integrity                                 │
+│ Path / MTU / Multipath                    │
+│ Channel / Priority / Reliability          │
+│ TTL / Ordering                            │
+│                                          │
+│       ← SIN conocimiento semántico       │
+└──────────────────────────────────────────┘
+    │
+    ▼
+┌──────────────────────────────────────────┐
 │             DATA PLANE                   │
 │ UDP / WireGuard / QUIC / DERP / etc.     │
 ├──────────────────────────────────────────┤
@@ -29,7 +42,30 @@
 └──────────────────────────────────────────┘
 ```
 
-> **Regla de oro:** el Core conoce estructura, direccionamiento, sesión, transporte, fragmentación, integridad y control. El Profile conoce significado. La Application conoce comportamiento.
+> **Regla de oro:** el Core conoce estructura, direccionamiento, sesión, transporte, fragmentación, integridad y control. El Profile conoce significado. La Application conoce comportamiento. El Data Plane es intercambiable.
+
+---
+
+## IPv7 Core Specification v0.1 (línea base)
+
+> Especificación mínima que debe congelarse antes de agregar nuevos perfiles. El ADN de IPv7.
+
+1. **Container** — unidad estructural de transporte. Contiene metadatos comunes y uno o más Objects.
+2. **Object / IDTLV** — `Type | Length | Object ID | Value`. `Type` es estructural; `Object ID` identifica la instancia dentro de la sesión/container.
+3. **Object Type vs Object ID** — el `Type` describe la estructura; el `Object ID` identifica el objeto concreto. Son distintos.
+4. **Object version** — versión lógica del estado de un objeto, separada de la `sequence` del Container.
+5. **Container sequence** — orden de transporte del Container, usado para detectar pérdida y reordenamiento.
+6. **Session** — contexto persistente identificado por `session_id` con origen/destino comprimido (aliasing).
+7. **Identity** — DID derivado de clave pública, separado de endpoint/location.
+8. **Integrity** — hash estructural (SHA-256) sobre el Container. No es autenticación ni confidencialidad.
+9. **Path / MTU / Multipath** — descubrimiento de caminos, identificadores de path, métricas y MTU.
+10. **Channel / Priority / Reliability** — clasificación de entrega/transporte. El Core transporta `channel_id`, `priority`, `reliability` sin saber el significado.
+11. **Fragmentation** — un Container puede dividirse en fragmentos con `container_id`, `fragment_id`, `fragment_count`. Los fragmentos no son Objects independientes.
+12. **TTL / timestamp / ordering** — expiración para discovery, paths, mensajes y estados.
+13. **Intent / propósito opaco** — `intent_id` numérico opaco para el Core; el Profile lo mapea a significado.
+14. **ACK opcional** — `ACK_CONTAINER`, `ACK_OBJECT`, `NO_ACK` son primitivas transportadas por el Core; el Profile decide cuándo usarlas.
+15. **Delta objects** — actualización parcial de un objeto existente sin retransmitir el estado completo.
+16. **Snapshot / resync** — recuperación de estado completo cuando un receptor pierde deltas.
 
 ---
 
@@ -85,21 +121,23 @@ PATH_MTU = 1280
 
 - [x] Primer separación `Core → Profiles → Applications`.
 - [ ] Formalizar regla: Core no conoce "chat", "archivo", "video", "sensor".
-- [ ] Canales (`control`, `telemetry`, `query`, `write`, `emergency`) son mecanismos de transporte, no semántica.
+- [ ] Canales (`control`, `telemetry`, `query`, `write`, `emergency`) son **clasificación de entrega/transporte**, no semántica.
 - [ ] Definir que `channels.py` pertenece al Core como **clase de tráfico**, no como perfil.
 
 ### 2. Object / Container como unidad central
 
 - [x] Existe `ContainerV1`/`ObjectV1` estructural.
-- [ ] Documentar que IPv7 transporta **Containers compuestos por Objects**.
+- [ ] Documentar que un Container es una **unidad estructural de transporte** con metadatos comunes y uno o más Objects.
 - [ ] Soportar múltiples Objects heterogéneos en un mismo Container:
   ```text
   Container
+   ├── Header/context
    ├── Object: temperatura
    ├── Object: posición
    ├── Object: estado
    ├── Object: timestamp
-   └── Object: delta
+   ├── Object: delta
+   └── Integrity
   ```
 - [ ] Explorar `Container` dentro de `Container` para agregación.
 
@@ -115,7 +153,47 @@ PATH_MTU = 1280
 - [ ] Separar **tipo estructural**, **identificación local del objeto** y **contenido**.
 - [ ] Permitir reutilizar objetos y referenciarlos por ID para deltas/compresión.
 
-### 4. Delta objects
+### 4. Type ≠ Object ID
+
+- [ ] `Type` describe la estructura; `Object ID` identifica la instancia.
+- [ ] Ejemplo:
+  ```text
+  Type = TEMPERATURE
+  Object ID = 04
+  Value = 23.7
+  ```
+- [ ] Deltas referencian el `Object ID` sin volver a describir todo el objeto:
+  ```text
+  Object 04 → Δ +0.2
+  ```
+
+### 5. Versionado de Objects y Profiles
+
+- [ ] Agregar `version` al Object:
+  ```text
+  Object:
+    type
+    version
+    object_id
+    length
+    value
+  ```
+- [ ] Agregar versionado a Profiles:
+  ```text
+  Profile:
+    profile_id
+    version
+    schema_id
+  ```
+- [ ] Ejemplos: `chat.v1`, `chat.v2`, `file.v1`, `media.v1`.
+
+### 6. Container sequence vs Object version
+
+- [ ] `Container sequence` = orden de transporte del Container.
+- [ ] `Object version` = estado lógico del objeto.
+- [ ] No son lo mismo. Se usan para detectar pérdida, reordenamiento y deltas obsoletos.
+
+### 7. Delta objects
 
 - [ ] Diseñar modelo de actualización por delta:
   ```text
@@ -130,7 +208,7 @@ PATH_MTU = 1280
 - [ ] Aplicar a sensores, video, audio y sincronización.
 - [ ] No es compresión; es un modelo de estado.
 
-### 5. Object aggregation
+### 8. Object aggregation
 
 - [ ] Agrupar muchos cambios pequeños en un solo Container:
   ```text
@@ -142,7 +220,32 @@ PATH_MTU = 1280
   ```
 - [ ] Reducir overhead de paquetes.
 
-### 6. Schema / dictionary negotiation
+### 9. Snapshot / resync
+
+- [ ] Mecanismo de recuperación de estado completo cuando un receptor pierde deltas.
+- [ ] Ejemplo:
+  ```text
+  A → B: Δ83
+  B → A: falta estado 81
+  A → B: SNAPSHOT
+  ```
+- [ ] Especialmente importante en multimedia y sensores.
+
+### 10. Object como entidad persistente
+
+- [ ] Un Object puede representar una entidad que permanece durante una sesión.
+- [ ] Ejemplo:
+  ```text
+  Object ID 15
+    tipo = vehicle
+    estado = ...
+  Container 101 → Object 15 Δ
+  Container 102 → Object 15 Δ
+  Container 103 → Object 15 Δ
+  ```
+- [ ] Esto diferencia a IPv7 de IP: transporta actualizaciones de entidades, no solo paquetes aislados.
+
+### 11. Schema / dictionary negotiation
 
 - [ ] Definir negociación de esquemas entre nodos:
   ```text
@@ -151,13 +254,14 @@ PATH_MTU = 1280
   A: envía datos compactos
   ```
 - [ ] Evaluar CBOR y IDs de esquema para no repetir estructuras.
+- [ ] Conectar con versionado de Profiles.
 
-### 7. Session ID + aliasing
+### 12. Session ID + aliasing
 
 - [ ] Usar `session_id` (uint32) en vez de repetir origen/destino.
 - [ ] Comprimir identidad de sesión una vez establecida.
 
-### 8. Seguridad separada
+### 13. Seguridad separada
 
 - [x] SHA-256 como integridad de paquete.
 - [ ] Agregar firma / autenticidad del DID.
@@ -171,13 +275,55 @@ PATH_MTU = 1280
   Anti-replay   → sequence + timestamp
   ```
 
-### 9. Control plane vs data plane
+### 14. Transporte agnóstico
+
+- [ ] El Core no depende de un único transporte físico.
+- [ ] Puede funcionar sobre UDP, WireGuard, QUIC, DERP, LAN, Internet y transportes futuros.
+- [ ] `MagicSocket` debe poderse adaptar a nuevos data planes sin cambiar `ContainerV1`.
+
+### 15. Control plane vs data plane
 
 - [x] Firebase como control plane provisional.
 - [ ] Diseñar control plane nativo IPv7 (discovery/federación) sin depender de Firebase.
 - [ ] Mantener DERP/UDP/WireGuard como data plane intercambiables.
 
-### 10. Capability discovery
+### 16. Path identity
+
+- [ ] Cuando haya multipath, identificar caminos con `PATH_ID`.
+- [ ] Asociar métricas por path:
+  ```text
+  PATH_ID
+  MTU
+  latency
+  loss
+  capacity
+  state
+  ```
+
+### 17. Fragmentación
+
+- [ ] Un Container se divide en fragmentos con:
+  ```text
+  container_id
+  fragment_id
+  fragment_count
+  offset
+  ```
+- [ ] Los fragmentos pertenecen al Container, no son Objects independientes.
+- [ ] No contaminan la semántica.
+
+### 18. TTL / expiración
+
+- [ ] TTL para discovery, paths, mensajes y estados.
+- [ ] Evitar que información vieja permanezca indefinidamente.
+
+### 19. ACK opcional
+
+- [ ] Tres niveles: `ACK_CONTAINER`, `ACK_OBJECT`, `NO_ACK`.
+- [ ] Algunos perfiles no necesitan ACK (telemetry); otros sí (file, control).
+- [ ] El Core transporta el mecanismo; el Profile decide.
+
+### 20. Capability discovery
 
 - [ ] Un nodo anuncia capacidades (`chat`, `file`, `gateway`, `sensor`, ...).
 - [ ] Otro nodo puede descubrir y seleccionar un gateway u otro servicio.
@@ -281,7 +427,11 @@ PATH_MTU = 1280
 ## Notas
 
 - El Core transporta estructura; Profiles aportan semántica; Applications deciden comportamiento.  
-- `channels.py` pertenece al Core como **clasificación de transporte**, no como conocimiento de la aplicación.  
+- `channels.py` pertenece al Core como **clasificación de entrega/transporte**, no como conocimiento de la aplicación.  
+- IPv7 Core no depende de un único transporte físico: UDP, WireGuard, QUIC, DERP, LAN, Internet y futuros transportes son data planes.  
 - WireGuard sigue siendo el transporte cifrado; IPv7 se concentra en estructura, sesiones, objetos y perfiles.  
 - Firebase RTDB es un control plane provisional. El Core no depende de Firebase.  
-- SHA-256 es integridad, no autenticidad ni confidencialidad.
+- SHA-256 es integridad, no autenticidad ni confidencialidad.  
+- `Type` ≠ `Object ID`: `Type` es estructura, `Object ID` es instancia local.  
+- `Container sequence` ≠ `Object version`: una es transporte, la otra es estado.  
+- Un Container es una unidad de transporte con metadatos comunes y múltiples Objects, con integridad propia.
