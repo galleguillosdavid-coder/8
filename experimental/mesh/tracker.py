@@ -42,6 +42,20 @@ def list_peers(base_url: str, session: str):
     return db_get(url) or {}
 
 
+def list_active_peers(base_url: str, session: str, now=None):
+    if now is None:
+        now = time.time()
+    peers = list_peers(base_url, session)
+    active = {}
+    for pid, pdata in peers.items():
+        ts = pdata.get("timestamp", 0)
+        expiry = pdata.get("expiry", 0)
+        if expiry and now - ts > expiry:
+            continue
+        active[pid] = pdata
+    return active
+
+
 async def main():
     parser = argparse.ArgumentParser(description="IPv7 mesh tracker")
     parser.add_argument("--session", required=True, help="codigo de la red mesh")
@@ -78,6 +92,12 @@ async def main():
         "local_port": local_port,
         "relay_port": args.relay_port,
         "can_gateway": has_internet(),
+        "capabilities": ["mesh"],
+        "profiles": ["mesh.v1"],
+        "availability": "available",
+        "truth": "declared",
+        "source": node_id,
+        "expiry": 3600,
         "timestamp": time.time(),
     }
 
@@ -87,7 +107,7 @@ async def main():
     print("[tracker] pares conocidos:")
     for _ in range(15):
         time.sleep(2)
-        peers = list_peers(base_url, args.session)
+        peers = list_active_peers(base_url, args.session)
         for pid, pdata in peers.items():
             if pid == node_id:
                 continue

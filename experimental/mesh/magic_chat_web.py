@@ -19,7 +19,7 @@ from ..vpn.nat_setup import STUN_SERVER, discover_public_endpoint, has_internet
 from .cert_utils import CERT_PATH
 from .magic_socket import MagicSocket
 from .packet_v1 import PacketV1
-from .tracker import list_peers, load_firebase_url, publish_node
+from .tracker import list_active_peers, load_firebase_url, publish_node
 from werkzeug.utils import secure_filename
 
 
@@ -95,6 +95,12 @@ class MagicChat:
             "relay_port": peer_relay[1] if peer_relay else 0,
             "mtu": own_mtu,
             "can_gateway": has_internet(),
+            "capabilities": ["chat", "file_transfer", "path_mtu"],
+            "profiles": ["chat.v1"],
+            "availability": "available",
+            "truth": "declared",
+            "source": node_id,
+            "expiry": 3600,
             "timestamp": time.time(),
         }
         publish_node(base_url, session, node_id, info)
@@ -147,7 +153,7 @@ class MagicChat:
             return peer_addr, peer_relay
         for _ in range(30):
             time.sleep(1)
-            peers = list_peers(base_url, session)
+            peers = list_active_peers(base_url, session)
             p = peers.get(peer_id)
             if p:
                 endpoint = p.get("endpoint", "")

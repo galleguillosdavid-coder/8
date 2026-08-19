@@ -28,7 +28,7 @@ from werkzeug.utils import secure_filename
 
 from ..container_v1 import ContainerV1, ObjectV1, ContainerError
 from ..mesh.magic_chat_web import MagicChat
-from ..mesh.tracker import list_peers, load_firebase_url
+from ..mesh.tracker import list_active_peers, load_firebase_url
 
 
 CHAT_TYPE = 100
@@ -348,9 +348,20 @@ def events():
 def peers():
     if isinstance(chat, MagicChat):
         base_url = load_firebase_url()
-        all_peers = list_peers(base_url, chat.session)
+        all_peers = list_active_peers(base_url, chat.session)
         result = [
-            {"id": k, "endpoint": v.get("endpoint"), "relay_port": v.get("relay_port")}
+            {
+                "id": k,
+                "endpoint": v.get("endpoint"),
+                "relay_port": v.get("relay_port"),
+                "mtu": v.get("mtu"),
+                "capabilities": v.get("capabilities", []),
+                "profiles": v.get("profiles", []),
+                "availability": v.get("availability"),
+                "truth": v.get("truth"),
+                "source": v.get("source"),
+                "expiry": v.get("expiry"),
+            }
             for k, v in all_peers.items()
             if k != chat.node_id
         ]
