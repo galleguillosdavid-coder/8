@@ -5,6 +5,7 @@ Envuelve MagicSocket y ContainerV1 para enviar/recibir chat y archivos.
 """
 
 import asyncio
+import base64
 import json
 import queue
 import socket
@@ -12,6 +13,13 @@ import struct
 import threading
 import time
 from pathlib import Path
+
+import cryptography.exceptions
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+    Ed25519PrivateKey,
+    Ed25519PublicKey,
+)
 
 from ..container_v1 import ContainerV1, ObjectV1, ContainerError
 from ..vpn.keygen import generate_keypair
@@ -87,13 +95,21 @@ class MagicChat:
             public_endpoint = f"127.0.0.1:{local_port}"
         own_host = public_endpoint.rsplit(":", 1)[0] if ":" in public_endpoint else "127.0.0.1"
 
-        keys = generate_keypair()
-        self.did = f"did:ipv7:{keys.public_b64}"
+        sign_key = Ed25519PrivateKey.generate()
+        self._sign_private = sign_key
+        self._sign_public = sign_key.public_key()
+        self.public_b64 = base64.b64encode(
+            self._sign_public.public_bytes(
+                encoding=serialization.Encoding.Raw,
+                format=serialization.PublicFormat.Raw,
+            )
+        ).decode("ascii")
+        self.did = f"did:ipv7:{self.public_b64}"
         self.peer_did = peer_id
         info = {
             "id": node_id,
             "did": self.did,
-            "public_key": keys.public_b64,
+            "public_key": self.public_b64,
             "endpoint": public_endpoint,
             "local_port": local_port,
             "relay_port": peer_relay[1] if peer_relay else 0,
@@ -145,13 +161,42 @@ class MagicChat:
             self.send_path_discover()
             break
 
+    def _public_key_from_did(self, did: str):
+        try:
+            public_b64 = did.split(":", 2)[2]
+            public_bytes = base64.b64decode(public_b64)
+            return Ed25519PublicKey.from_public_bytes(public_bytes)
+        except Exception:
+            return None
+
+    def _send_container(self, container):
+        cbytes = container.encode()
+        signature = self._sign_private.sign(cbytes)
+        self.ms.send(self.peer_did, PacketV1.pack(cbytes, signature))
+
+    def _on_packet(self, src, payload):
+        try:
+            cbytes, signature = PacketV1.unpack(payload)
+            public_key = self._public_key_from_did(src)
+            if public_key is None:
+                return
+            try:
+                public_key.verify(signature, cbytes)
+            except cryptography.exceptions.InvalidSignature:
+                return
+            container = ContainerV1.decode(cbytes)
+            for obj in container.objects:
+                self._handle_object(obj)
+        except ContainerError:
+            pass
+
     def send_path_discover(self):
         value = json.dumps({"mtu": self.own_mtu}).encode("utf-8")
         container = ContainerV1(objects=[
             self._channel_object(CONTROL),
             ObjectV1(type=PATH_DISCOVER_TYPE, id=0, value=value),
         ])
-        self.ms.send(self.peer_did, PacketV1.pack(container.encode()))
+        self._send_container(container)
 
     def send_path_response(self):
         value = json.dumps({"mtu": self.own_mtu}).encode("utf-8")
@@ -159,7 +204,7 @@ class MagicChat:
             self._channel_object(CONTROL),
             ObjectV1(type=PATH_RESPONSE_TYPE, id=0, value=value),
         ])
-        self.ms.send(self.peer_did, PacketV1.pack(container.encode()))
+        self._send_container(container)
 
     def _resolve_peer(self, base_url, session, peer_id, peer_addr, peer_relay, own_host):
         peer_did = None
@@ -198,13 +243,6 @@ class MagicChat:
             self.file_id_counter += 1
             return self.file_id_counter
 
-    def _on_packet(self, src, payload):
-        try:
-            container = ContainerV1.decode(PacketV1.unpack(payload))
-            for obj in container.objects:
-                self._handle_object(obj)
-        except ContainerError:
-            pass
 
     def _handle_object(self, obj):
         if obj.type == CHANNEL_OBJECT_TYPE:
@@ -260,8 +298,7 @@ class MagicChat:
             self._channel_object(WRITE),
             ObjectV1(type=CHAT_TYPE, id=0, value=text.encode("utf-8")),
         ])
-        data = PacketV1.pack(container.encode())
-        self.ms.send(self.peer_did, data)
+        self._send_container(container)
 
     def send_file(self, path, filename):
         with open(path, "rb") as f:
@@ -281,7 +318,7 @@ class MagicChat:
             self._channel_object(WRITE),
             ObjectV1(type=FILE_META_TYPE, id=0, value=meta),
         ])
-        self.ms.send(self.peer_did, PacketV1.pack(container.encode()))
+        self._send_container(container)
 
         for i in range(total):
             chunk = data[i * chunk_size:(i + 1) * chunk_size]
@@ -290,7 +327,7 @@ class MagicChat:
                 self._channel_object(WRITE),
                 ObjectV1(type=FILE_CHUNK_TYPE, id=0, value=payload),
             ])
-            self.ms.send(self.peer_did, PacketV1.pack(container.encode()))
+            self._send_container(container)
             if i % 10 == 0:
                 time.sleep(0.001)
 

@@ -1,7 +1,10 @@
 """
-IPv7 — Transporte con integridad SHA-256 (experimental).
+IPv7 — Transporte con integridad SHA-256 y firma Ed25519 (experimental).
 
-Envuelve un ContainerV1 codificado y agrega un checksum de 32 bytes.
+Envuelve un ContainerV1 codificado y agrega:
+  - una firma Ed25519 de 64 bytes (opcional pero activa por defecto)
+  - un checksum SHA-256 de 32 bytes sobre Container + firma
+
 El hash NO cubre su propio campo.
 """
 
@@ -12,23 +15,31 @@ from ..container_v1 import ContainerError
 
 
 CHECKSUM_SIZE = 32
+SIGNATURE_SIZE = 64
 
 
 class PacketV1:
     @staticmethod
-    def pack(container_bytes: bytes) -> bytes:
-        """Agrega SHA-256 delante del payload (appended)."""
-        checksum = hashlib.sha256(container_bytes).digest()
-        return container_bytes + checksum
+    def pack(container_bytes: bytes, signature: bytes = b"") -> bytes:
+        """Agrega firma y SHA-256 delante del payload."""
+        if len(signature) != SIGNATURE_SIZE and signature:
+            raise ContainerError(f"Firma debe tener {SIGNATURE_SIZE} bytes")
+        if len(signature) == 0:
+            signature = b"\x00" * SIGNATURE_SIZE
+        signed = container_bytes + signature
+        checksum = hashlib.sha256(signed).digest()
+        return signed + checksum
 
     @staticmethod
-    def unpack(data: bytes) -> bytes:
-        """Verifica y devuelve los bytes del Container."""
-        if len(data) < CHECKSUM_SIZE:
+    def unpack(data: bytes):
+        """Verifica y devuelve (container_bytes, signature)."""
+        if len(data) < CHECKSUM_SIZE + SIGNATURE_SIZE:
             raise ContainerError("Packet demasiado corto")
-        container = data[:-CHECKSUM_SIZE]
-        received = data[-CHECKSUM_SIZE:]
-        expected = hashlib.sha256(container).digest()
-        if not hmac.compare_digest(received, expected):
+        checksum = data[-CHECKSUM_SIZE:]
+        signed = data[:-CHECKSUM_SIZE]
+        expected = hashlib.sha256(signed).digest()
+        if not hmac.compare_digest(received := checksum, expected):
             raise ContainerError("SHA-256 no coincide")
-        return container
+        container = signed[:-SIGNATURE_SIZE]
+        signature = signed[-SIGNATURE_SIZE:]
+        return container, signature
