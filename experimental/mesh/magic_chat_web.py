@@ -200,13 +200,11 @@ class MagicChat:
 
     def _on_packet(self, src, payload):
         try:
-            print(f"[MagicChat] packet from {src[:20]}... len={len(payload)}", flush=True)
             container = ContainerV1.decode(PacketV1.unpack(payload))
             for obj in container.objects:
-                print(f"[MagicChat] object type={obj.type} id={obj.id}", flush=True)
                 self._handle_object(obj)
-        except ContainerError as e:
-            print(f"[MagicChat] decode error: {e}", flush=True)
+        except ContainerError:
+            pass
 
     def _handle_object(self, obj):
         if obj.type == CHANNEL_OBJECT_TYPE:
@@ -263,7 +261,6 @@ class MagicChat:
             ObjectV1(type=CHAT_TYPE, id=0, value=text.encode("utf-8")),
         ])
         data = PacketV1.pack(container.encode())
-        print(f"[send_message] text={text!r} len={len(data)} to={self.peer_did[:20]}...", flush=True)
         self.ms.send(self.peer_did, data)
 
     def send_file(self, path, filename):
