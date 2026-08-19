@@ -24,6 +24,7 @@ import argparse
 import asyncio
 import ipaddress
 import json
+import socket
 import subprocess
 import sys
 import time
@@ -109,6 +110,63 @@ def wait_for_peer(base_url: str, session: str, role: str, timeout: int = 60):
     return None
 
 
+def has_internet(timeout: float = 3.0) -> bool:
+    """Detecta si este nodo tiene salida a Internet probando DNS publicos."""
+    for host, port in (("1.1.1.1", 53), ("8.8.8.8", 53)):
+        try:
+            with socket.create_connection((host, port), timeout=timeout):
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def decide_mode(local_role: str, own_can: bool, peer_can: bool):
+    """
+    Devuelve (local_mode, remote_mode).
+    Modos: 'client', 'gateway', 'peer'.
+    Si un solo nodo puede salir a Internet, ese es gateway.
+    Si ambos pueden, el rol 'b' es gateway (arbitraje simple).
+    Si ninguno puede, modo peer a peer.
+    """
+    if own_can and not peer_can:
+        return "gateway", "client"
+    if peer_can and not own_can:
+        return "client", "gateway"
+    if own_can and peer_can:
+        if local_role == "a":
+            return "client", "gateway"
+        return "gateway", "client"
+    return "peer", "peer"
+
+
+def enable_gateway(tunnel_ip: str):
+    """
+    Intenta habilitar el gateway en Windows: forwarding + NAT.
+    Mejor esfuerzo; si falla, imprime advertencia.
+    """
+    print("  Intentando habilitar gateway (forwarding + NAT) ...")
+    ps = f"""
+    $addr = Get-NetIPAddress -AddressFamily IPv4 | Where-Object {{$_.IPAddress -eq '{tunnel_ip}'}} | Select-Object -First 1
+    if ($addr) {{
+        $idx = $addr.InterfaceIndex
+        netsh interface ipv4 set interface $idx forwarding=enabled | Out-Null
+        $existing = Get-NetNat -Name 'IPv7NAT' -ErrorAction SilentlyContinue
+        if (-not $existing) {{
+            try {{ New-NetNat -Name 'IPv7NAT' -InternalIPInterfaceAddressPrefix '10.7.0.0/24' | Out-Null }} catch {{}}
+        }}
+    }}
+    """
+    try:
+        subprocess.run(
+            ["powershell.exe", "-Command", ps],
+            check=False,
+            timeout=20,
+        )
+    except Exception as e:
+        print(f"  No se pudo habilitar gateway automaticamente: {e}", file=sys.stderr)
+
+
 def install_tunnel(conf_path: Path):
     if not WIREGUARD_EXE.exists():
         raise RuntimeError(f"No se encontro {WIREGUARD_EXE}; instale WireGuard")
@@ -133,13 +191,16 @@ def main():
     public_endpoint, local_port = asyncio.run(discover_public_endpoint(stun))
     print(f"  publico: {public_endpoint}  (puerto local: {local_port})")
 
-    print("[2/4] Generando claves WireGuard ...")
+    print("[2/4] Generando claves WireGuard y detectando Internet ...")
     keys = generate_keypair()
+    own_can = has_internet()
+    print(f"  salida a Internet propia: {own_can}")
 
     own = {
         "public_key": keys.public_b64,
         "public_endpoint": public_endpoint,
         "local_port": local_port,
+        "can_gateway": own_can,
         "timestamp": time.time(),
     }
     own_url = f"{base_url}/sessions/{args.session}/{local_role}"
@@ -153,8 +214,17 @@ def main():
 
     print(f"  peer remoto: {remote['public_endpoint']}  key: {remote['public_key'][:20]}...")
 
+    peer_can = bool(remote.get("can_gateway", False))
+    local_mode, remote_mode = decide_mode(local_role, own_can, peer_can)
+    print(f"  modo local: {local_mode}, modo remoto: {remote_mode}")
+
     address = "10.7.0.1/24" if local_role == "a" else "10.7.0.2/24"
-    allowed = "10.7.0.2/32" if local_role == "a" else "10.7.0.1/32"
+    if local_mode == "client":
+        allowed = "0.0.0.0/0"
+    elif local_mode == "gateway":
+        allowed = "10.7.0.0/24"
+    else:
+        allowed = "10.7.0.0/24"
 
     conf = CONF_TEMPLATE.format(
         private_key=keys.private_b64,
@@ -179,6 +249,10 @@ def main():
         print("Instalando servicio de tunel (requiere admin) ...")
         install_tunnel(conf_path)
         print("Tunel instalado.")
+        if local_mode == "gateway":
+            tunnel_ip = address.split("/")[0]
+            time.sleep(1)
+            enable_gateway(tunnel_ip)
     else:
         print("Ejecuta el .bat generado como administrador para levantar el tunel.")
 
