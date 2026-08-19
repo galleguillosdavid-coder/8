@@ -18,6 +18,7 @@ import sys
 import threading
 import time
 
+from .cert_utils import ensure_certs
 from .derp_client import DerpClient
 from .tracker import list_peers, load_firebase_url, publish_node
 from ..vpn.keygen import generate_keypair
@@ -67,17 +68,19 @@ def main():
     parser.add_argument("--node-id", required=True)
     parser.add_argument("--peer", required=True)
     parser.add_argument("--relay", default="127.0.0.1:47000", help="ip:puerto del DERP relay")
+    parser.add_argument("--no-tls", action="store_true", help="usar TCP plano")
     args = parser.parse_args()
 
     relay_host, relay_port = args.relay.rsplit(":", 1)
     relay_port = int(relay_port)
+    ca_cert = None if args.no_tls else ensure_certs()[0]
 
     print(f"[{args.node_id}] publicando en tracker ...", flush=True)
     base_url = discover_and_publish(args.session, args.node_id, relay_host, relay_port)
 
     host, port = relay_host, relay_port
-    print(f"[{args.node_id}] conectando a DERP {host}:{port} ...", flush=True)
-    client = DerpClient(args.node_id, host, port)
+    print(f"[{args.node_id}] conectando a DERP {host}:{port} (TLS={not args.no_tls}) ...", flush=True)
+    client = DerpClient(args.node_id, host, port, ca_cert=ca_cert)
     client.on_packet = lambda src, p: print(f"[{args.node_id}] <- {src}: {p.decode('utf-8', 'replace')}", flush=True)
     client.connect()
     print(f"[{args.node_id}] listo. Escribi mensajes y apreta Enter.", flush=True)

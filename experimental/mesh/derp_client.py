@@ -4,10 +4,13 @@ IPv7 — Cliente DERP-like mínimo (experimental).
 
 import argparse
 import socket
+import ssl
 import struct
 import sys
 import threading
 import time
+
+from .cert_utils import CERT_PATH, ensure_certs
 
 
 def send_frame(sock, msg_type: int, src: bytes | None, payload: bytes):
@@ -39,17 +42,25 @@ def recv_frame(sock):
 
 
 class DerpClient:
-    def __init__(self, node_id, relay_host="127.0.0.1", relay_port=47000):
+    def __init__(self, node_id, relay_host="127.0.0.1", relay_port=47000, ca_cert=CERT_PATH):
         self.node_id = node_id.encode() if isinstance(node_id, str) else node_id
         self.relay_host = relay_host
         self.relay_port = relay_port
+        self.ca_cert = ca_cert
         self.sock = None
         self.on_packet = None
         self.connected = False
 
     def connect(self):
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sock.connect((self.relay_host, self.relay_port))
+        raw = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        raw.connect((self.relay_host, self.relay_port))
+        if self.ca_cert:
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            ctx.load_verify_locations(cafile=str(self.ca_cert))
+            ctx.check_hostname = False
+            self.sock = ctx.wrap_socket(raw)
+        else:
+            self.sock = raw
         send_frame(self.sock, 1, None, self.node_id)
         self.connected = True
         threading.Thread(target=self._recv_loop, daemon=True).start()
@@ -89,10 +100,12 @@ def main():
     parser.add_argument("--relay", default="127.0.0.1:47000")
     parser.add_argument("--to")
     parser.add_argument("--text")
+    parser.add_argument("--no-tls", action="store_true", help="usar TCP plano")
     args = parser.parse_args()
 
+    ca = None if args.no_tls else ensure_certs()[0]
     host, port = args.relay.rsplit(":", 1)
-    client = DerpClient(args.id, host, int(port))
+    client = DerpClient(args.id, host, int(port), ca_cert=ca)
     client.on_packet = lambda src, p: print(f"[{args.id}] de {src}: {p.decode('utf-8', 'replace')}")
     client.connect()
     print(f"[{args.id}] conectado a {args.relay}")

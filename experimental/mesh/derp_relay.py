@@ -5,9 +5,13 @@ Reenvía paquetes opacos entre nodos usando un ID como dirección.
 No descifra el payload.
 """
 
+import argparse
 import socket
+import ssl
 import struct
 import threading
+
+from .cert_utils import ensure_certs
 
 
 HOST = "0.0.0.0"
@@ -44,9 +48,11 @@ def recv_frame(conn):
     return msg_type, src, payload
 
 
-def run_relay(host=HOST, port=PORT):
+def run_relay(host=HOST, port=PORT, cert=None, key=None):
     clients = {}
     lock = threading.Lock()
+    if cert is None or key is None:
+        cert, key = ensure_certs()
 
     def client_thread(conn, addr):
         node_id = None
@@ -90,15 +96,33 @@ def run_relay(host=HOST, port=PORT):
             except OSError:
                 pass
 
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    sock.bind((host, port))
-    sock.listen(16)
-    print(f"[relay] escuchando en {host}:{port}", flush=True)
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.load_cert_chain(certfile=cert, keyfile=key)
+
+    base_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    base_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    base_sock.bind((host, port))
+    base_sock.listen(16)
+    print(f"[relay] escuchando en {host}:{port} (TLS)", flush=True)
     while True:
-        conn, addr = sock.accept()
+        raw, addr = base_sock.accept()
+        try:
+            conn = ctx.wrap_socket(raw, server_side=True)
+        except ssl.SSLError:
+            raw.close()
+            continue
         threading.Thread(target=client_thread, args=(conn, addr), daemon=True).start()
 
 
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--host", default=HOST)
+    parser.add_argument("--port", type=int, default=PORT)
+    parser.add_argument("--cert", help="certificado PEM")
+    parser.add_argument("--key", help="clave privada PEM")
+    args = parser.parse_args()
+    run_relay(args.host, args.port, args.cert, args.key)
+
+
 if __name__ == "__main__":
-    run_relay()
+    main()
